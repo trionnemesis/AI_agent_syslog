@@ -33,7 +33,9 @@ class LLMHandlerTest(unittest.TestCase):
             {"log": "line2", "analysis": {"attack_type": "mal", "reason": "y"}},
         ]
         summary = llm_handler._summarize_examples(examples)
+
         self.assertNotIn("line1", summary)
+
         self.assertIn("phish", summary)
         self.assertIn("y", summary)
 
@@ -53,9 +55,11 @@ class LLMHandlerTest(unittest.TestCase):
 
         llm_handler.LLM_CHAIN.batch.assert_called_once()
         sent = llm_handler.LLM_CHAIN.batch.call_args.args[0][0]["examples_summary"]
+
         self.assertNotIn("Failed password", sent)
         self.assertIn("ssh", sent)
         self.assertIn("bad", sent)
+
         syslog_json = llm_handler.LLM_CHAIN.batch.call_args.args[0][0]["syslog_json"]
         self.assertIn("sshd", syslog_json)
 

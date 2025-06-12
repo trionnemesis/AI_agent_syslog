@@ -134,6 +134,7 @@ class LLMCostTracker:
 COST_TRACKER = LLMCostTracker()
 
 
+
 def _prepare_llm_input(alert: Dict[str, Any]) -> Dict[str, str]:
     """Return original line and parsed syslog JSON for the prompt."""
 
@@ -143,6 +144,7 @@ def _prepare_llm_input(alert: Dict[str, Any]) -> Dict[str, str]:
         "log_line": line,
         "syslog_json": json.dumps(parsed, ensure_ascii=False, sort_keys=True),
     }
+
 
 
 def _summarize_examples(examples: List[Dict[str, Any]]) -> str:
@@ -176,10 +178,12 @@ def llm_analyse(alerts: List[Dict[str, Any]]) -> List[Optional[dict]]:
 
     for idx, item in enumerate(alerts):
         alert = item.get("alert", item)
+
         prepared = _prepare_llm_input(alert)
         log_line = prepared["log_line"]
         syslog_json = prepared["syslog_json"]
         examples_summary = _summarize_examples(item.get("examples", []))
+
         cache_key = log_line + "|" + syslog_json + "|" + examples_summary
         cached = CACHE.get(cache_key)
         if cached is not None:
@@ -222,10 +226,12 @@ def llm_analyse(alerts: List[Dict[str, Any]]) -> List[Optional[dict]]:
                 text = resp.content if hasattr(resp, "content") else resp
                 item = alerts[orig_idx]
                 alert = item.get("alert", item)
+
                 prepared = _prepare_llm_input(alert)
                 log_line = prepared["log_line"]
                 syslog_json = prepared["syslog_json"]
                 examples_summary = _summarize_examples(item.get("examples", []))
+
                 cache_key = log_line + "|" + syslog_json + "|" + examples_summary
                 try:
                     parsed = json.loads(text)
