@@ -33,7 +33,7 @@
 3.  **Wazuh 告警收集**：Wazuh 會將過濾後的告警輸出至指定檔案或 HTTP 端點，本系統直接讀取並比對，無需逐行呼叫 API。
 4.  **啟發式評分與取樣**：對告警行以 `fast_score()` 計算分數，挑選最高分的前 `SAMPLE_TOP_PERCENT`％ 作為候選。
 5.  **向量嵌入與歷史比對**：將候選日誌嵌入向量並寫入 FAISS 索引，以便搜尋過往相似模式。
-6.  **LLM 深度分析**：把 Wazuh 告警 JSON 傳入 `llm_analyse()` 由 Gemini 分析是否為攻擊行為並回傳結構化結果。
+6.  **LLM 深度分析**：將解析後的 syslog 與原始行傳入 `llm_analyse()` 由 Gemini 分析是否為攻擊行為並回傳結構化結果。
 7.  **結果輸出與成本控制**：將分析結果寫入 `analysis_results.json`，同時更新向量索引、狀態檔並追蹤 LLM Token 成本。
 
 ### 架構圖
