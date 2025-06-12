@@ -30,8 +30,11 @@ class IntegrationTest(TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "test.log"
             lines = [
-                "1.1.1.1 - - [01/Jan/2023:00:00:00 +0000] \"GET /etc/passwd HTTP/1.1\" 404 0 \"-\" \"nmap\" resp_time:2",
-                "normal log"
+                (
+                    '<34>Oct 11 22:14:15 host sshd[123]: Failed password for invalid user '
+                    'root from 1.1.1.1 port 22'
+                ),
+                "normal log",
             ]
             log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
