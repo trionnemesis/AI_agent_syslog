@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from .. import config
 from . import log_parser
@@ -23,13 +23,10 @@ def analyse_lines(lines: List[str]) -> List[Dict[str, Any]]:
     if not lines:
         return []
 
-    alerts = get_alerts_for_lines(lines)
-    if not alerts:
-        save_state(STATE)
-        VECTOR_DB.save()
-        return []
+    scored: List[Tuple[float, str]] = []
+    for line in lines:
+        scored.append((log_parser.fast_score(line), line))
 
-    scored = [(log_parser.fast_score(a["line"]), a) for a in alerts]
     scored.sort(key=lambda x: x[0], reverse=True)
     num_to_sample = max(1, int(len(scored) * config.SAMPLE_TOP_PERCENT / 100))
     top_scored = [sl for sl in scored if sl[0] > 0.0][:num_to_sample]
@@ -38,8 +35,13 @@ def analyse_lines(lines: List[str]) -> List[Dict[str, Any]]:
         VECTOR_DB.save()
         return []
 
-    top_lines = [item["line"] for _, item in top_scored]
-    top_alerts = [item["alert"] for _, item in top_scored]
+    top_lines = [line for _, line in top_scored]
+
+    alerts_map: Dict[str, List[Dict[str, Any]]] = {}
+    if config.WAZUH_ENABLED or config.WAZUH_ALERTS_FILE or config.WAZUH_ALERTS_URL:
+        for item in get_alerts_for_lines(top_lines):
+            alerts_map.setdefault(item["line"], []).append(item["alert"])
+
     embeddings = [embed(line) for line in top_lines]
 
     contexts = []
@@ -50,9 +52,11 @@ def analyse_lines(lines: List[str]) -> List[Dict[str, Any]]:
     else:
         contexts = [[] for _ in embeddings]
 
-    analysis_inputs = [
-        {"alert": alert, "examples": ctx} for alert, ctx in zip(top_alerts, contexts)
-    ]
+    analysis_inputs = []
+    for line, ctx in zip(top_lines, contexts):
+        wazuh_alerts = alerts_map.get(line)
+        alert = wazuh_alerts[0] if wazuh_alerts else {"original_log": line}
+        analysis_inputs.append({"alert": alert, "examples": ctx})
 
     analysis_results = llm_analyse(analysis_inputs)
 
@@ -63,13 +67,8 @@ def analyse_lines(lines: List[str]) -> List[Dict[str, Any]]:
         VECTOR_DB.add(embeddings, cases_to_add)
 
     exported: List[Dict[str, Any]] = []
-    for (fast_s, item), analysis in zip(top_scored, analysis_results):
-        entry: Dict[str, Any] = {
-            "log": item["line"],
-            "fast_score": fast_s,
-            "analysis": analysis,
-        }
-        exported.append(entry)
+    for (fast_s, line), analysis in zip(top_scored, analysis_results):
+        exported.append({"log": line, "fast_score": fast_s, "analysis": analysis})
 
     save_state(STATE)
     VECTOR_DB.save()
