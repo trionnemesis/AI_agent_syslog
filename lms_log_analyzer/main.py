@@ -36,6 +36,7 @@ def main():
     log_paths: List[Path] = []
     if config.LMS_TARGET_LOG_DIR.exists() and config.LMS_TARGET_LOG_DIR.is_dir():
         # 收集目錄下所有支援的日誌檔，包含壓縮格式 (.gz、.bz2)。
+        # 預設會掃描 /var/log，可透過環境變數覆寫。
         for p in config.LMS_TARGET_LOG_DIR.iterdir():
             if p.is_file() and p.suffix.lower() in [".log", ".gz", ".bz2"]:
                 log_paths.append(p)
