@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .. import config
+from . import log_parser
 
 try:
     import faiss
@@ -35,11 +36,20 @@ def embed(text: str) -> List[float]:
 
     若系統已安裝 `sentence-transformers` 會直接產生真正的嵌入；
     否則使用 SHA-256 雜湊計算出假向量，方便在無依賴環境下測試。
+
+    會優先解析 syslog 行，只取 process 與 message 部分進行嵌入，
+    以更聚焦地捕捉事件語義。
     """
+
+    parsed = log_parser.parse_syslog_line(text)
+    if parsed:
+        to_embed = (parsed.get("app", "") + " " + parsed.get("msg", "")).strip()
+        if to_embed:
+            text = to_embed
 
     if SENTENCE_MODEL:
         return SENTENCE_MODEL.encode(text, convert_to_numpy=True).tolist()
-    digest = hashlib.sha256(text.encode('utf-8', 'replace')).digest()
+    digest = hashlib.sha256(text.encode("utf-8", "replace")).digest()
     vec_template = list(digest)
     vec = []
     while len(vec) < EMBED_DIM:
