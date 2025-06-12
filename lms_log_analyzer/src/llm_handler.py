@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from .. import config
 from .utils import CACHE, retry_with_backoff
+from . import log_parser
 
 try:
     from langchain_google_genai import ChatGoogleGenerativeAI
@@ -36,13 +37,17 @@ if config.GEMINI_API_KEY and ChatGoogleGenerativeAI and PromptTemplate:
             convert_system_message_to_human=True,
         )
         PROMPT_TEMPLATE_STR = """
-System: 你是一位資安分析助手。你將收到來自 Wazuh 的告警 JSON，以及若干歷史案例供參考。請綜合評估是否存在潛在攻擊或異常活動。
+System: 你是一位資安分析助手。以下提供解析後的 syslog 字典與原始日誌行，
+並附上若干歷史案例摘要，請判斷是否出現攻擊或異常行為。
 
 歷史案例摘要：
 {examples_summary}
 
-Wazuh Alert JSON:
-{alert_json}
+原始日誌行：
+{log_line}
+
+Syslog 字典 (JSON)：
+{syslog_json}
 
 請回傳以下欄位組成的 JSON：
 - "is_attack": boolean
@@ -52,7 +57,7 @@ Wazuh Alert JSON:
 
 JSON Output:
 """
-        PROMPT = PromptTemplate(input_variables=["alert_json", "examples_summary"], template=PROMPT_TEMPLATE_STR)
+        PROMPT = PromptTemplate(input_variables=["log_line", "syslog_json", "examples_summary"], template=PROMPT_TEMPLATE_STR)
         LLM_CHAIN = PROMPT | llm  # type: ignore
         logger.info(f"LLM ({config.LLM_MODEL_NAME}) initialized")
     except Exception as e:  # pragma: no cover - optional
@@ -129,44 +134,27 @@ class LLMCostTracker:
 COST_TRACKER = LLMCostTracker()
 
 
-def _trim_alert(alert: Dict[str, Any]) -> Dict[str, Any]:
+def _prepare_llm_input(alert: Dict[str, Any]) -> Dict[str, str]:
+    """Return original line and parsed syslog JSON for the prompt."""
 
-
-    rule = alert.get("rule", {})
-    trimmed = {
-        "rule": {
-            "id": rule.get("id"),
-            "description": rule.get("description"),
-            "level": rule.get("level"),
-        }
+    line = alert.get("original_log") or alert.get("full_log") or ""
+    parsed = log_parser.parse_syslog_line(line) or {}
+    return {
+        "log_line": line,
+        "syslog_json": json.dumps(parsed, ensure_ascii=False, sort_keys=True),
     }
-    original = alert.get("full_log") or alert.get("original_log")
-    if original:
-        trimmed["original_log"] = original
-    agent_name = alert.get("agent", {}).get("name")
-    if agent_name:
-        trimmed.setdefault("agent", {})["name"] = agent_name
-    manager_name = alert.get("manager", {}).get("name")
-    if manager_name:
-        trimmed.setdefault("manager", {})["name"] = manager_name
-    data = alert.get("data", {})
-    for key in ("srcip", "dstip", "srcport", "dstport"):
-        value = data.get(key)
-        if value is not None:
-            trimmed.setdefault("data", {})[key] = value
-    return trimmed
 
 
 def _summarize_examples(examples: List[Dict[str, Any]]) -> str:
-
+    """Summarize past examples without including full log lines."""
 
     parts = []
     for ex in examples:
-        log = str(ex.get("log", "")).replace("\n", " ")
         analysis = ex.get("analysis", {})
         attack_type = analysis.get("attack_type", "")
         reason = analysis.get("reason", "")
-        parts.append(f"{log} | {attack_type} | {reason}".strip())
+        if attack_type or reason:
+            parts.append(f"attack: {attack_type} | reason: {reason}".strip())
     return "\n".join(parts)
 
 
@@ -188,17 +176,18 @@ def llm_analyse(alerts: List[Dict[str, Any]]) -> List[Optional[dict]]:
 
     for idx, item in enumerate(alerts):
         alert = item.get("alert", item)
-        trimmed = _trim_alert(alert)
+        prepared = _prepare_llm_input(alert)
+        log_line = prepared["log_line"]
+        syslog_json = prepared["syslog_json"]
         examples_summary = _summarize_examples(item.get("examples", []))
-        alert_json = json.dumps(trimmed, ensure_ascii=False, sort_keys=True)
-        cache_key = alert_json + "|" + examples_summary
+        cache_key = log_line + "|" + syslog_json + "|" + examples_summary
         cached = CACHE.get(cache_key)
         if cached is not None:
             # 若已在快取中，直接使用
             results[idx] = cached
         else:
             indices_to_query.append(idx)
-            batch_inputs.append({"alert_json": alert_json, "examples_summary": examples_summary})
+            batch_inputs.append({"log_line": log_line, "syslog_json": syslog_json, "examples_summary": examples_summary})
 
     if not batch_inputs:
         # 全部都有快取，不需再呼叫 LLM
@@ -233,16 +222,23 @@ def llm_analyse(alerts: List[Dict[str, Any]]) -> List[Optional[dict]]:
                 text = resp.content if hasattr(resp, "content") else resp
                 item = alerts[orig_idx]
                 alert = item.get("alert", item)
-                trimmed = _trim_alert(alert)
+                prepared = _prepare_llm_input(alert)
+                log_line = prepared["log_line"]
+                syslog_json = prepared["syslog_json"]
                 examples_summary = _summarize_examples(item.get("examples", []))
-                alert_json = json.dumps(trimmed, ensure_ascii=False, sort_keys=True)
-                cache_key = alert_json + "|" + examples_summary
+                cache_key = log_line + "|" + syslog_json + "|" + examples_summary
                 try:
                     parsed = json.loads(text)
                     # 成功解析則寫入結果並更新快取
                     results[orig_idx] = parsed
                     CACHE.put(cache_key, parsed)
-                    total_in += len(PROMPT.format(alert_json=alert_json, examples_summary=examples_summary).split())  # type: ignore
+                    total_in += len(
+                        PROMPT.format(
+                            log_line=log_line,
+                            syslog_json=syslog_json,
+                            examples_summary=examples_summary,
+                        ).split()
+                    )  # type: ignore
                     total_out += len(text.split())
                 except json.JSONDecodeError as e:
                     logger.error(f"Failed parsing LLM response: {e}")
