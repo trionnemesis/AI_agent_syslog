@@ -1,11 +1,14 @@
-name: Python package
 
+name: Python package
 on:
   push:
     branches: [main, master, work]
   pull_request:
     branches: [main, master, work]
-  workflow_dispatch:
+
+  workflow_dispatch: {}
+
+
 
 jobs:
   build:
@@ -29,3 +32,4 @@ jobs:
       - name: Run tests
         run: |
           pytest -q
+
