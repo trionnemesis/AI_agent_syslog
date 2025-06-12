@@ -13,10 +13,10 @@
 本系統採用模組化設計，主要包含以下幾個核心部分：
 
 1.  **日誌來源 (Log Source)**:
-    * **批次處理**: 定期掃描並處理指定目錄下的日誌檔案（支援 `.log`, `.gz`, `.bz2`）。
+    * **批次處理**: 定期掃描並處理指定目錄下的日誌檔案（支援 `.log`, `.gz`, `.bz2`）。預設會掃描 `/var/log` 目錄。
     * **即時處理**: 透過 HTTP 端點接收來自 Filebeat 等代理程式的即時日誌流。
 2.  **前置處理與過濾 (Preprocessor & Filter)**:
-    * **Wazuh 告警整合**: 僅針對 Wazuh 已觸發規則的告警日誌進行分析，有效縮小分析範圍。
+    * **Wazuh 告警整合 (可選)**: 若有設定 Wazuh，可為高分日誌提供進一步的告警資訊。
     * **啟發式評分 (Heuristic Scoring)**: 透過內建的關鍵字與規則，對日誌進行快速評分，篩選出高風險日誌。
     * **智慧取樣 (Sampling)**: 僅挑選評分最高的日誌樣本送交 LLM，大幅降低 API 成本。
 3.  **核心分析引擎 (Core Analyzer)**:
@@ -30,8 +30,8 @@
 
 1.  **Filebeat 近即時輸入**：Filebeat 監控日誌並將新行透過 HTTP 傳送至 `filebeat_server.py`，立即觸發後續分析。
 2.  **批次日誌處理**：亦可定期執行 `main.py`，程式會根據 `data/file_state.json` 記錄的偏移量只讀取新增內容。
-3.  **Wazuh 告警收集**：Wazuh 會將過濾後的告警輸出至指定檔案或 HTTP 端點，本系統直接讀取並比對，無需逐行呼叫 API。
-4.  **啟發式評分與取樣**：對告警行以 `fast_score()` 計算分數，挑選最高分的前 `SAMPLE_TOP_PERCENT`％ 作為候選。
+3.  **Wazuh 告警收集 (可選)**：若啟用 Wazuh，可讀取其輸出的告警資訊，並與高分日誌比對。
+4.  **啟發式評分與取樣**：直接對日誌行以 `fast_score()` 計算分數，挑選最高分的前 `SAMPLE_TOP_PERCENT`％ 作為候選。
 5.  **向量嵌入與歷史比對**：將候選日誌嵌入向量並寫入 FAISS 索引，以便搜尋過往相似模式。
 6.  **LLM 深度分析**：將解析後的 syslog 與原始行傳入 `llm_analyse()` 由 Gemini 分析是否為攻擊行為並回傳結構化結果。
 7.  **結果輸出與成本控制**：將分析結果寫入 `analysis_results.json`，同時更新向量索引、狀態檔並追蹤 LLM Token 成本。
@@ -55,15 +55,15 @@
 └────┬───────┘
      │
      ▼
-┌───────────────┐
-│ Wazuh Alerts │ ← 由 Wazuh 轉存檔案/端點讀取告警
-│ get_alerts_for_lines()│
-└────┬─────────┘
-     │
-     ▼
 ┌──────────────┐
 │ Fast Scorer  │ ← 啟發式快速評分
 │ fast_score() │
+└────┬─────────┘
+     │
+     ▼
+┌───────────────┐
+│ Wazuh Alerts │ ← 可選的告警補充
+│ get_alerts_for_lines()│
 └────┬─────────┘
      │ top X%
      ▼
@@ -132,7 +132,7 @@ Pytest: 用於驅動專案的單元測試與整合測試。
 整合服務:
 
 Google Gemini: 作為核心分析引擎的大型語言模型。
-Wazuh: 作為主要的資安告警來源與日誌的前置過濾器。
+Wazuh (可選): 提供額外的資安告警資訊，可輔助判斷但非必需。
 Filebeat: 作為收集與轉發即時日誌的代理程式。
 開發與維運:
 
@@ -205,7 +205,7 @@ filebeat.inputs:
   - type: log
     enabled: true
     paths:
-      - /var/log/LMS_LOG/*.log
+      - /var/log/*.log
 
 output.http:
   url: "http://localhost:8080"
@@ -220,7 +220,7 @@ pytest
 VII. 設定詳解
 所有可自訂的參數都集中在 config.py 中，也可透過環境變數覆寫。常見的設定包含：
 ```
-LMS_TARGET_LOG_DIR：要掃描的日誌目錄。
+LMS_TARGET_LOG_DIR：要掃描的日誌目錄，預設為 `/var/log`。
 LMS_ANALYSIS_OUTPUT_FILE：分析結果輸出的 JSON 路徑。
 CACHE_SIZE、SAMPLE_TOP_PERCENT：控制快取大小與取樣比例。
 BATCH_SIZE：LLM 一次處理的告警筆數，可透過 LMS_LLM_BATCH_SIZE 設定。
