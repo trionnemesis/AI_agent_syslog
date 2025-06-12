@@ -32,23 +32,30 @@ class LLMHandlerTest(unittest.TestCase):
             {"log": "line1\n", "analysis": {"attack_type": "phish", "reason": "x"}},
             {"log": "line2", "analysis": {"attack_type": "mal", "reason": "y"}},
         ]
-
+        summary = llm_handler._summarize_examples(examples)
+        self.assertIn("line1", summary)
+        self.assertIn("phish", summary)
+        self.assertIn("y", summary)
 
     def test_llm_analyse_caches_and_summarizes(self):
+        line = (
+            '<34>Oct 11 22:14:15 host sshd[123]: Failed password for invalid user '
+            'root from 1.1.1.1 port 22'
+        )
         example = {
-            "log": "bad log",
-            "analysis": {"attack_type": "sql", "reason": "r"},
+            "log": line,
+            "analysis": {"attack_type": "ssh", "reason": "bad"},
         }
-        alerts = [{"alert": {"rule": {"id": 1}}, "examples": [example]}]
+        alerts = [{"alert": {"original_log": line}, "examples": [example]}]
 
         with patch("lms_log_analyzer.src.llm_handler.retry_with_backoff", side_effect=lambda f, *a, **k: f(*a, **k)):
             result1 = llm_handler.llm_analyse(alerts)
 
         llm_handler.LLM_CHAIN.batch.assert_called_once()
         sent = llm_handler.LLM_CHAIN.batch.call_args.args[0][0]["examples_summary"]
-        self.assertIn("bad log", sent)
-        alert_json = llm_handler.LLM_CHAIN.batch.call_args.args[0][0]["alert_json"]
-        self.assertIn("\"id\": 1", alert_json)
+        self.assertIn("Failed password", sent)
+        syslog_json = llm_handler.LLM_CHAIN.batch.call_args.args[0][0]["syslog_json"]
+        self.assertIn("sshd", syslog_json)
 
         llm_handler.LLM_CHAIN.batch.reset_mock()
         with patch("lms_log_analyzer.src.llm_handler.retry_with_backoff", side_effect=lambda f, *a, **k: f(*a, **k)):
@@ -60,7 +67,7 @@ class LLMHandlerTest(unittest.TestCase):
     def test_llm_analyse_budget_limit(self):
         llm_handler.COST_TRACKER.get_hourly_cost = MagicMock(return_value=llm_handler.config.MAX_HOURLY_COST_USD)
 
-        alerts = [{"alert": {"rule": {"id": 1}}, "examples": []}]
+        alerts = [{"alert": {"original_log": "line"}, "examples": []}]
         with patch("lms_log_analyzer.src.llm_handler.retry_with_backoff", side_effect=lambda f,*a,**k: f(*a, **k)):
             result = llm_handler.llm_analyse(alerts)
         llm_handler.LLM_CHAIN.batch.assert_not_called()
@@ -69,7 +76,7 @@ class LLMHandlerTest(unittest.TestCase):
     def test_llm_analyse_disabled(self):
         llm_handler.LLM_CHAIN = None
 
-        alerts = [{"alert": {"rule": {"id": 1}}, "examples": []}]
+        alerts = [{"alert": {"original_log": "line"}, "examples": []}]
         result = llm_handler.llm_analyse(alerts)
         self.assertEqual(result, [None])
 

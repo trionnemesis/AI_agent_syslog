@@ -1,64 +1,125 @@
 from __future__ import annotations
 """日誌解析與啟發式評分輔助函式"""
 
-from typing import List
+from typing import Dict, Optional
+
+import re
 
 # 常見的可疑關鍵字，命中越多得分越高
 SUSPICIOUS_KEYWORDS = [
-    "/etc/passwd",
-    "<script>",
-    " OR ",
-    "%20OR%20",
-    "SELECT ",
-    "UNION ",
-    "INSERT ",
-    "CONCAT("
+    "failed password",
+    "authentication failure",
+    "invalid user",
+    "denied",
+    "segfault",
+    "kernel panic",
+    "unauthorized",
+    "refused",
+    "error",
 ]
 
+# Regex patterns for RFC5424 and RFC3164 syslog messages
+RFC5424_RE = re.compile(
+    r"^<(?P<pri>\d+)>(?P<version>\d)\s+(?P<timestamp>\S+)\s+(?P<host>\S+)\s+"
+    r"(?P<app>\S+)\s+(?P<pid>\S+)\s+(?P<msgid>\S+)\s+(?P<msg>.*)$"
+)
 
-def parse_status(line: str) -> int:
-    """從 Apache/Nginx 等格式的日誌行擷取 HTTP 狀態碼"""
+RFC3164_RE = re.compile(
+    r"^<(?P<pri>\d+)>(?P<timestamp>[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+"
+    r"(?P<host>\S+)\s+(?P<app>[^\[]+?)(?:\[(?P<pid>\d+)\])?:\s*(?P<msg>.*)$"
+)
 
-    try:
-        parts = line.split("\"")
-        if len(parts) > 2:
-            status_part = parts[2].strip().split()[0]
-            return int(status_part)
-    except Exception:
-        pass
-    return 0
+SEVERITY_MAP = {
+    0: "emerg",
+    1: "alert",
+    2: "crit",
+    3: "err",
+    4: "warning",
+    5: "notice",
+    6: "info",
+    7: "debug",
+}
+
+FACILITY_MAP = {
+    0: "kern",
+    1: "user",
+    2: "mail",
+    3: "daemon",
+    4: "auth",
+    5: "syslog",
+    6: "lpr",
+    7: "news",
+    8: "uucp",
+    9: "clock",
+    10: "authpriv",
+    11: "ftp",
+    12: "ntp",
+    13: "audit",
+    14: "alert",
+    15: "clock",
+    16: "local0",
+    17: "local1",
+    18: "local2",
+    19: "local3",
+    20: "local4",
+    21: "local5",
+    22: "local6",
+    23: "local7",
+}
 
 
-def response_time(line: str) -> float:
-    """讀取行內的回應時間數值，若無則回傳 0"""
+def parse_syslog_line(line: str) -> Optional[Dict[str, str]]:
+    """Parse a syslog line in either RFC5424 or RFC3164 format."""
 
-    if "resp_time:" in line:
-        try:
-            val_str = line.split("resp_time:")[1].split()[0].split("\"")[0]
-            return float(val_str)
-        except (ValueError, IndexError):
-            pass
-    return 0.0
+    m = RFC5424_RE.match(line)
+    if not m:
+        m = RFC3164_RE.match(line)
+    if not m:
+        return None
+
+    pri = int(m.group("pri"))
+    facility_num = pri // 8
+    severity_num = pri % 8
+
+    parsed = {
+        "facility": FACILITY_MAP.get(facility_num, str(facility_num)),
+        "severity": SEVERITY_MAP.get(severity_num, str(severity_num)),
+        "timestamp": m.group("timestamp"),
+        "host": m.group("host"),
+        "app": m.group("app"),
+        "msg": m.group("msg"),
+    }
+
+    pid = m.groupdict().get("pid")
+    if pid:
+        parsed["pid"] = pid
+    return parsed
 
 
 def fast_score(line: str) -> float:
     """以啟發式方式替日誌行計算 0 到 1 的分數"""
 
+    parsed = parse_syslog_line(line)
+    if not parsed:
+        return 0.0
+
     score = 0.0
-    status = parse_status(line)
-    if not 200 <= status < 400 and status != 0:
-        # 非正常狀態碼視為可疑
-        score += 0.4
-    if response_time(line) > 1.0:
-        # 回應時間過長亦可能代表異常
+
+    severity = parsed.get("severity")
+    if severity in {"crit", "alert", "emerg"}:
+        score += 0.5
+    elif severity == "err":
+        score += 0.3
+    elif severity == "warning":
+        score += 0.1
+
+    facility = parsed.get("facility")
+    if facility in {"auth", "authpriv"}:
         score += 0.2
-    lp = line.lower()
-    keyword_hits = sum(1 for k in SUSPICIOUS_KEYWORDS if k.lower() in lp)
-    if keyword_hits > 0:
-        # 命中關鍵字愈多加分愈多，上限 0.4
-        score += min(0.4, keyword_hits * 0.1)
-    common_scanner_uas = ["nmap", "sqlmap", "nikto", "curl/", "python-requests"]
-    if any(ua.lower() in lp for ua in common_scanner_uas):
-        # 出現常見掃描器 User-Agent
-        score += 0.2
+
+    msg = parsed.get("msg", "").lower()
+    keyword_hits = sum(1 for k in SUSPICIOUS_KEYWORDS if k in msg)
+    if keyword_hits:
+        score += min(0.3, keyword_hits * 0.1)
+
     return min(score, 1.0)
