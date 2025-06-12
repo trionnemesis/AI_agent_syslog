@@ -3,17 +3,22 @@ from lms_log_analyzer.src import log_parser
 from lms_log_analyzer.src.utils import LRUCache
 
 class TestLogParser(unittest.TestCase):
-    def test_parse_status(self):
-        line = '127.0.0.1 - - [01/Jan/2023:00:00:00 +0000] "GET / HTTP/1.1" 404 123'
-        self.assertEqual(log_parser.parse_status(line), 404)
-        self.assertEqual(log_parser.parse_status('no status'), 0)
-
-    def test_response_time(self):
-        self.assertAlmostEqual(log_parser.response_time('resp_time:1.23'), 1.23)
-        self.assertEqual(log_parser.response_time('foo'), 0.0)
+    def test_parse_syslog_line(self):
+        line = (
+            '<34>Oct 11 22:14:15 host sshd[123]: Failed password for invalid user '
+            'root from 1.1.1.1 port 22'
+        )
+        parsed = log_parser.parse_syslog_line(line)
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["severity"], "crit")
+        self.assertEqual(parsed["facility"], "auth")
+        self.assertIn("Failed password", parsed["msg"])
 
     def test_fast_score(self):
-        line = '1.1.1.1 - - [01/Jan/2023:00:00:00 +0000] "GET /etc/passwd HTTP/1.1" 404 0 "-" "nmap" resp_time:2'
+        line = (
+            '<34>Oct 11 22:14:15 host sshd[123]: Failed password for invalid user '
+            'root from 1.1.1.1 port 22'
+        )
         score = log_parser.fast_score(line)
         self.assertAlmostEqual(score, 0.9, places=2)
 
