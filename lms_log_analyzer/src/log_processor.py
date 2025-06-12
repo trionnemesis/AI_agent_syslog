@@ -23,7 +23,9 @@ def analyse_lines(lines: List[str]) -> List[Dict[str, Any]]:
     if not lines:
         return []
 
+
     # 先不依賴 Wazuh，直接對原始日誌逐行評分
+
     scored: List[Tuple[float, str]] = []
     for line in lines:
         scored.append((log_parser.fast_score(line), line))
@@ -38,13 +40,17 @@ def analyse_lines(lines: List[str]) -> List[Dict[str, Any]]:
 
     top_lines = [line for _, line in top_scored]
 
+
     # 若設定了 Wazuh，僅對挑出的高分日誌再去比對其告警結果
+
     alerts_map: Dict[str, List[Dict[str, Any]]] = {}
     if config.WAZUH_ENABLED or config.WAZUH_ALERTS_FILE or config.WAZUH_ALERTS_URL:
         for item in get_alerts_for_lines(top_lines):
             alerts_map.setdefault(item["line"], []).append(item["alert"])
 
+
     # 產生向量以便後續搜尋歷史案例
+
     embeddings = [embed(line) for line in top_lines]
 
     # 從向量庫中取得相似歷史案例作為輔助上下文
@@ -56,7 +62,9 @@ def analyse_lines(lines: List[str]) -> List[Dict[str, Any]]:
     else:
         contexts = [[] for _ in embeddings]
 
+
     # 組合要送入 LLM 的輸入，每筆包含告警內容與歷史案例
+
     analysis_inputs = []
     for line, ctx in zip(top_lines, contexts):
         wazuh_alerts = alerts_map.get(line)
