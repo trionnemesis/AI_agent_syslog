@@ -107,7 +107,6 @@ MCP_lms_log_analyzer/
    │  │  ├─ log_processor.py
    │  │  ├─ utils.py
    │  │  ├─ vector_db.py
-   │  │  ├─ wazuh_api.py
    │  │  └─ wazuh_consumer.py
    │  ├─ data/
    │  └─ logs/
@@ -115,7 +114,7 @@ MCP_lms_log_analyzer/
       ├─ test_integration.py
       ├─ test_llm_handler.py
       ├─ test_log_parser.py
-      └─ test_wazuh_api.py
+     └─ test_wazuh_consumer.py
 ```
 III. 技術與主要工具
 本專案基於以下技術與工具建構而成：
@@ -237,7 +236,7 @@ VIII. 專案進度與未來展望
 進階向量搜尋: 已導入 faiss-cpu 與 sentence-transformers，實現了高效的本地向量相似度搜尋。
 壓縮日誌處理: 系統能自動讀取並處理 .gz 與 .bz2 格式的壓縮日誌。
 狀態管理與日誌輪替: 透過追蹤檔案 inode 與讀取位移，能穩定處理日誌輪替 (Log Rotation) 而不遺漏或重複。
-錯誤處理與韌性: 關鍵的網路I/O（如 LLM 與 Wazuh API 呼叫）已加上具備指數退讓的重試機制。
+錯誤處理與韌性: 關鍵的網路I/O（如 LLM 與 Wazuh 告警讀取）已加上具備指數退讓的重試機制。
 外部化設定: 專案設定皆可透過環境變數覆寫，無需修改程式碼。
 近即時處理: 已提供 filebeat_server.py，支援透過 HTTP 進行近即時的日誌分析。
 成本控制與批次處理: 成功實作了結果快取、智慧取樣、成本上限保護，並透過批次處理提升 LLM API 呼叫效率。
