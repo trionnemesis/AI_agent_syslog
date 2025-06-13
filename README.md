@@ -13,10 +13,9 @@
 本系統採用模組化設計，主要包含以下幾個核心部分：
 
 1.  **日誌來源 (Log Source)**:
-    * **批次處理**: 定期掃描並處理指定目錄下的日誌檔案（支援 `.log`, `.gz`, `.bz2`）。
+    * **批次處理**: 定期掃描並處理指定目錄下的日誌檔案（支援 `.log`, `.gz`, `.bz2`）。預設會掃描 `/var/log` 目錄。
     * **即時處理**: 透過 HTTP 端點接收來自 Filebeat 等代理程式的即時日誌流。
 2.  **前置處理與過濾 (Preprocessor & Filter)**:
-    * **Wazuh 告警整合**: 僅針對 Wazuh 已觸發規則的告警日誌進行分析，有效縮小分析範圍。
     * **啟發式評分 (Heuristic Scoring)**: 透過內建的關鍵字與規則，對日誌進行快速評分，篩選出高風險日誌。
     * **智慧取樣 (Sampling)**: 僅挑選評分最高的日誌樣本送交 LLM，大幅降低 API 成本。
 3.  **核心分析引擎 (Core Analyzer)**:
@@ -30,11 +29,10 @@
 
 1.  **Filebeat 近即時輸入**：Filebeat 監控日誌並將新行透過 HTTP 傳送至 `filebeat_server.py`，立即觸發後續分析。
 2.  **批次日誌處理**：亦可定期執行 `main.py`，程式會根據 `data/file_state.json` 記錄的偏移量只讀取新增內容。
-3.  **Wazuh 告警收集**：Wazuh 會將過濾後的告警輸出至指定檔案或 HTTP 端點，本系統直接讀取並比對，無需逐行呼叫 API。
-4.  **啟發式評分與取樣**：對告警行以 `fast_score()` 計算分數，挑選最高分的前 `SAMPLE_TOP_PERCENT`％ 作為候選。
-5.  **向量嵌入與歷史比對**：將候選日誌嵌入向量並寫入 FAISS 索引，以便搜尋過往相似模式。
-6.  **LLM 深度分析**：將解析後的 syslog 與原始行傳入 `llm_analyse()` 由 Gemini 分析是否為攻擊行為並回傳結構化結果。
-7.  **結果輸出與成本控制**：將分析結果寫入 `analysis_results.json`，同時更新向量索引、狀態檔並追蹤 LLM Token 成本。
+3.  **啟發式評分與取樣**：直接對日誌行以 `fast_score()` 計算分數，挑選最高分的前 `SAMPLE_TOP_PERCENT`％ 作為候選。
+4.  **向量嵌入與歷史比對**：將候選日誌嵌入向量並寫入 FAISS 索引，以便搜尋過往相似模式。
+5.  **LLM 深度分析**：將解析後的 syslog 與原始行傳入 `llm_analyse()` 由 Gemini 分析是否為攻擊行為並回傳結構化結果。
+6.  **結果輸出與成本控制**：將分析結果寫入 `analysis_results.json`，同時更新向量索引、狀態檔並追蹤 LLM Token 成本。
 
 ### 架構圖
 
@@ -53,12 +51,6 @@
 │  Parser    │ ← 逐行讀取新日誌、解壓縮、處理編碼
 │ tail_since │
 └────┬───────┘
-     │
-     ▼
-┌───────────────┐
-│ Wazuh Alerts │ ← 由 Wazuh 轉存檔案/端點讀取告警
-│ get_alerts_for_lines()│
-└────┬─────────┘
      │
      ▼
 ┌──────────────┐
@@ -107,15 +99,12 @@ MCP_lms_log_analyzer/
    │  │  ├─ log_processor.py
    │  │  ├─ utils.py
    │  │  ├─ vector_db.py
-   │  │  ├─ wazuh_api.py
-   │  │  └─ wazuh_consumer.py
    │  ├─ data/
    │  └─ logs/
    └─ tests/
       ├─ test_integration.py
       ├─ test_llm_handler.py
       ├─ test_log_parser.py
-      └─ test_wazuh_api.py
 ```
 III. 技術與主要工具
 本專案基於以下技術與工具建構而成：
@@ -132,7 +121,6 @@ Pytest: 用於驅動專案的單元測試與整合測試。
 整合服務:
 
 Google Gemini: 作為核心分析引擎的大型語言模型。
-Wazuh: 作為主要的資安告警來源與日誌的前置過濾器。
 Filebeat: 作為收集與轉發即時日誌的代理程式。
 開發與維運:
 
@@ -205,7 +193,7 @@ filebeat.inputs:
   - type: log
     enabled: true
     paths:
-      - /var/log/LMS_LOG/*.log
+      - /var/log/*.log
 
 output.http:
   url: "http://localhost:8080"
@@ -220,13 +208,12 @@ pytest
 VII. 設定詳解
 所有可自訂的參數都集中在 config.py 中，也可透過環境變數覆寫。常見的設定包含：
 ```
-LMS_TARGET_LOG_DIR：要掃描的日誌目錄。
+LMS_TARGET_LOG_DIR：要掃描的日誌目錄，預設為 `/var/log`。
 LMS_ANALYSIS_OUTPUT_FILE：分析結果輸出的 JSON 路徑。
 CACHE_SIZE、SAMPLE_TOP_PERCENT：控制快取大小與取樣比例。
 BATCH_SIZE：LLM 一次處理的告警筆數，可透過 LMS_LLM_BATCH_SIZE 設定。
 MAX_HOURLY_COST_USD：每小時允許的 LLM 費用上限。
 GEMINI_API_KEY：Gemini API 金鑰，可透過環境變數提供。
-WAZUH_ALERTS_FILE／WAZUH_ALERTS_URL：若 Wazuh 已將告警輸出至檔案或 HTTP 端點，在此設定路徑或 URL 供程式讀取。
 ```
 VIII. 專案進度與未來展望
 此章節追蹤專案的實作進度與未來的優化方向。
@@ -237,7 +224,7 @@ VIII. 專案進度與未來展望
 進階向量搜尋: 已導入 faiss-cpu 與 sentence-transformers，實現了高效的本地向量相似度搜尋。
 壓縮日誌處理: 系統能自動讀取並處理 .gz 與 .bz2 格式的壓縮日誌。
 狀態管理與日誌輪替: 透過追蹤檔案 inode 與讀取位移，能穩定處理日誌輪替 (Log Rotation) 而不遺漏或重複。
-錯誤處理與韌性: 關鍵的網路I/O（如 LLM 與 Wazuh API 呼叫）已加上具備指數退讓的重試機制。
+錯誤處理與韌性: 關鍵的網路I/O（如 LLM 呼叫）已加上具備指數退讓的重試機制。
 外部化設定: 專案設定皆可透過環境變數覆寫，無需修改程式碼。
 近即時處理: 已提供 filebeat_server.py，支援透過 HTTP 進行近即時的日誌分析。
 成本控制與批次處理: 成功實作了結果快取、智慧取樣、成本上限保護，並透過批次處理提升 LLM API 呼叫效率。
@@ -255,7 +242,7 @@ VIII. 專案進度與未來展望
 導入分層式 LLM 架構: 對於 LLM 回傳「不確定」或信賴度低的結果，可設計一個升級機制，呼叫更強大（也更昂貴）的模型進行二次分析，實現成本與準確性的最佳平衡。
 
 3. 增強日誌解析與安全性
-增強日誌解析能力: 對於非 Wazuh 的複雜日誌格式，可導入 python-grok 函式庫，取代現有的字串切割，讓日誌解析更精準、更具擴展性。
+增強日誌解析能力: 對於複雜的 syslog 格式，可導入 python-grok 函式庫，取代現有的字串切割，讓日誌解析更精準、更具擴展性。
 強化金鑰安全性: 將 GEMINI_API_KEY 等敏感資訊從環境變數改為由專門的密鑰管理系統（如 HashiCorp Vault、AWS/GCP Secret Manager）進行管理。
 
 5. 持續優化程式碼

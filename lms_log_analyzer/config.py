@@ -15,8 +15,9 @@ VECTOR_DB_PATH = DATA_DIR / "faiss.index"
 # 儲存每筆向量對應的歷史案例（包含原始日誌與分析結果）
 CASE_DB_PATH = DATA_DIR / "cases.json"
 
-# 日誌與輸出結果的路徑，預設位於 ``/var/log``，亦可透過環境變數覆寫。
-DEFAULT_TARGET_LOG_DIR = "/var/log/LMS_LOG"
+# 日誌與輸出結果的路徑。預設掃描 ``/var/log`` 下的系統日誌，
+# 亦可透過環境變數覆寫。
+DEFAULT_TARGET_LOG_DIR = "/var/log"
 DEFAULT_ANALYSIS_OUTPUT_FILE = "/var/log/analyzer_results.json"
 DEFAULT_OPERATIONAL_LOG_FILE = BASE_DIR / "analyzer_script.log"
 
@@ -42,16 +43,6 @@ RETRY_MAX_DELAY = float(os.getenv("LMS_RETRY_MAX_DELAY", 30.0))
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 LLM_MODEL_NAME = os.getenv("LMS_LLM_MODEL_NAME", "gemini-1.5-flash-latest")
-
-# Wazuh API 整合設定，若三項皆存在，處理流程會先透過 Wazuh 篩選可疑日誌。
-WAZUH_API_URL = os.getenv("WAZUH_API_URL")
-WAZUH_API_USER = os.getenv("WAZUH_API_USER")
-WAZUH_API_PASSWORD = os.getenv("WAZUH_API_PASSWORD")
-WAZUH_ENABLED = bool(WAZUH_API_URL and WAZUH_API_USER and WAZUH_API_PASSWORD)
-
-# 若已將 Wazuh 告警轉存至檔案或 HTTP 端點，可在此指定路徑或 URL
-WAZUH_ALERTS_FILE = os.getenv("WAZUH_ALERTS_FILE")
-WAZUH_ALERTS_URL = os.getenv("WAZUH_ALERTS_URL")
 
 # Filebeat HTTP 伺服器設定
 FILEBEAT_HOST = os.getenv("FILEBEAT_HOST", "0.0.0.0")
