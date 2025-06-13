@@ -30,7 +30,8 @@
 
 1.  **Filebeat 近即時輸入**：Filebeat 監控日誌並將新行透過 HTTP 傳送至 `filebeat_server.py`，立即觸發後續分析。
 2.  **批次日誌處理**：亦可定期執行 `main.py`，程式會根據 `data/file_state.json` 記錄的偏移量只讀取新增內容。
-3.  **Wazuh 告警收集 (可選)**：若啟用 Wazuh，可讀取其輸出的告警資訊，並與高分日誌比對。
+3.  **Wazuh 告警收集 (可選)**：若啟用 Wazuh，可將告警輸出為 `alerts.json`，
+    由本程式透過 `WAZUH_ALERTS_FILE` 讀取並與高分日誌比對。
 4.  **啟發式評分與取樣**：直接對日誌行以 `fast_score()` 計算分數，挑選最高分的前 `SAMPLE_TOP_PERCENT`％ 作為候選。
 5.  **向量嵌入與歷史比對**：將候選日誌嵌入向量並寫入 FAISS 索引，以便搜尋過往相似模式。
 6.  **LLM 深度分析**：將解析後的 syslog 與原始行傳入 `llm_analyse()` 由 Gemini 分析是否為攻擊行為並回傳結構化結果。
@@ -225,7 +226,7 @@ CACHE_SIZE、SAMPLE_TOP_PERCENT：控制快取大小與取樣比例。
 BATCH_SIZE：LLM 一次處理的告警筆數，可透過 LMS_LLM_BATCH_SIZE 設定。
 MAX_HOURLY_COST_USD：每小時允許的 LLM 費用上限。
 GEMINI_API_KEY：Gemini API 金鑰，可透過環境變數提供。
-WAZUH_ALERTS_FILE／WAZUH_ALERTS_URL：若 Wazuh 已將告警輸出至檔案或 HTTP 端點，在此設定路徑或 URL 供程式讀取。
+WAZUH_ALERTS_FILE／WAZUH_ALERTS_URL：指定告警檔案或 HTTP 端點位置，程式會以非同步方式讀取告警資料。
 ```
 VIII. 專案進度與未來展望
 此章節追蹤專案的實作進度與未來的優化方向。

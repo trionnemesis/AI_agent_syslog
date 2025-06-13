@@ -41,3 +41,24 @@ class TestWazuhConsumer(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["alert"], {"original_log": "line2", "id": 1})
 
+    def test_offset_persists_and_reads_incrementally(self):
+        with tempfile.NamedTemporaryFile("w+", delete=False) as f:
+            config.WAZUH_ALERTS_FILE = f.name
+            config.WAZUH_ALERTS_URL = None
+            f.write(json.dumps({"original_log": "l1"}) + "\n")
+            f.flush()
+
+            first = wazuh_consumer.get_alerts_for_lines(["l1"])
+            self.assertEqual(len(first), 1)
+
+            # 呼叫第二次不會重複讀取先前的告警
+            second = wazuh_consumer.get_alerts_for_lines(["l1"])
+            self.assertEqual(second, [])
+
+            # 新增第二筆告警後應只讀取新增內容
+            f.write(json.dumps({"original_log": "l2"}) + "\n")
+            f.flush()
+            third = wazuh_consumer.get_alerts_for_lines(["l2"])
+            self.assertEqual(len(third), 1)
+            self.assertEqual(third[0]["alert"]["original_log"], "l2")
+

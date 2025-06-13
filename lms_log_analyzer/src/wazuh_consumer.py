@@ -15,11 +15,12 @@ from .. import config
 
 logger = logging.getLogger(__name__)
 
-# 紀錄檔案來源的讀取位置
+# 紀錄 alerts.json 的讀取位置。每次讀取時會從此位移繼續，
+# 只解析新加入的告警，避免重複處理並提升效率。
 _FILE_OFFSET = 0
 
 def _read_from_file() -> List[Dict[str, Any]]:
-    """自設定的檔案讀取新增的告警"""
+    """從 `WAZUH_ALERTS_FILE` 讀取新增的告警內容"""
     path_str = config.WAZUH_ALERTS_FILE
     if not path_str:
         return []
@@ -28,6 +29,7 @@ def _read_from_file() -> List[Dict[str, Any]]:
         return []
     global _FILE_OFFSET
     alerts = []
+    # 只從上次讀取結束的位置繼續，避免重複處理舊告警
     with path.open("r", encoding="utf-8") as f:
         f.seek(_FILE_OFFSET)
         for line in f:
