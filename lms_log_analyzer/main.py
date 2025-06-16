@@ -6,7 +6,6 @@ from __future__ import annotations
 資訊能寫入檔案與終端機。"""
 
 import logging
-import json
 from pathlib import Path
 from typing import List
 
@@ -47,12 +46,15 @@ def main():
     # 將實際處理交由 log_processor 模組
     results = process_logs(log_paths)
     if results:
-        # 有分析結果時將其輸出為 JSON 檔
-        try:
-            with open(config.LMS_ANALYSIS_OUTPUT_FILE, "w", encoding="utf-8") as f:
-                json.dump(results, f, ensure_ascii=False, indent=2)
-        except PermissionError:
-            logger.error(f"Cannot write analysis output to {config.LMS_ANALYSIS_OUTPUT_FILE}")
+        if not getattr(VECTOR_DB, "client", None):
+            try:
+                with open(config.LMS_ANALYSIS_OUTPUT_FILE, "w", encoding="utf-8") as f:
+                    import json
+                    json.dump(results, f, ensure_ascii=False, indent=2)
+            except PermissionError:
+                logger.error(
+                    f"Cannot write analysis output to {config.LMS_ANALYSIS_OUTPUT_FILE}"
+                )
 
     # 每次執行完畢都要儲存狀態與向量索引
     save_state(STATE)

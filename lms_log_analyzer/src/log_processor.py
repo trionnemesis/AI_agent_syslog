@@ -86,6 +86,14 @@ def analyse_lines(lines: List[str]) -> List[Dict[str, Any]]:
     for (fast_s, line), analysis in zip(top_scored, analysis_results):
         exported.append({"log": line, "fast_score": fast_s, "analysis": analysis})
 
+    # 將結果寫入 OpenSearch
+    if getattr(VECTOR_DB, "client", None):
+        for doc in exported:
+            try:
+                VECTOR_DB.client.index(index=config.OPENSEARCH_RESULT_INDEX, body=doc)
+            except Exception as exc:  # pragma: no cover - optional network failure
+                logger.error(f"Failed indexing result: {exc}")
+
     # 於流程結束時更新狀態與向量庫
     save_state(STATE)
     VECTOR_DB.save()

@@ -20,21 +20,21 @@
     * **啟發式評分 (Heuristic Scoring)**: 透過內建的關鍵字與規則，對日誌進行快速評分，篩選出高風險日誌。
     * **智慧取樣 (Sampling)**: 僅挑選評分最高的日誌樣本送交 LLM，大幅降低 API 成本。
 3.  **核心分析引擎 (Core Analyzer)**:
-    * **向量化與相似度搜尋**: 先解析 syslog，只將 `process` 與 `message` 部分組合後轉換成向量，並在 FAISS 向量資料庫中尋找相似的歷史攻擊案例。
+    * **向量化與相似度搜尋**: 先解析 syslog，只將 `process` 與 `message` 部分組合後轉換成向量，並在 OpenSearch 的 k-NN 索引中尋找相似的歷史攻擊案例。
     * **LLM 分析**: 呼叫 Google Gemini 模型，結合當前日誌與歷史案例，進行攻擊判斷、類型分類與原因分析。
     * **成本控制**: 包含結果快取 (Cache)、批次處理 (Batching) 及每小時費用上限，確保成本可控。
 4.  **結果輸出 (Output)**:
-    * 將分析結果以結構化的 JSON 格式寫入檔案中。
+    * 將分析結果寫入 OpenSearch 索引，方便後續查詢與儀表板呈現。
 
 ### 概念流程
 
-1.  **Filebeat 近即時輸入**：Filebeat 監控日誌並將新行透過 HTTP 傳送至 `filebeat_server.py`，立即觸發後續分析。
+1.  **Filebeat 近即時輸入**：Filebeat 監控日誌並直接將新行寫入 OpenSearch，省去自建 HTTP 伺服器。
 2.  **批次日誌處理**：亦可定期執行 `main.py`，程式會根據 `data/file_state.json` 記錄的偏移量只讀取新增內容。
 3.  **Wazuh 告警收集 (可選)**：若啟用 Wazuh，可讀取其輸出的告警資訊，並與高分日誌比對。
 4.  **啟發式評分與取樣**：直接對日誌行以 `fast_score()` 計算分數，挑選最高分的前 `SAMPLE_TOP_PERCENT`％ 作為候選。
-5.  **向量嵌入與歷史比對**：將候選日誌嵌入向量並寫入 FAISS 索引，以便搜尋過往相似模式。
+5.  **向量嵌入與歷史比對**：將候選日誌嵌入向量並寫入 OpenSearch 的 k-NN 索引，以便搜尋過往相似模式。
 6.  **LLM 深度分析**：將解析後的 syslog 與原始行傳入 `llm_analyse()` 由 Gemini 分析是否為攻擊行為並回傳結構化結果。
-7.  **結果輸出與成本控制**：將分析結果寫入 `analysis_results.json`，同時更新向量索引、狀態檔並追蹤 LLM Token 成本。
+7.  **結果輸出與成本控制**：將分析結果寫入 `lms-results` 索引，同時更新向量索引、狀態檔並追蹤 LLM Token 成本。
 
 ### 架構圖
 
@@ -72,7 +72,7 @@
 │ embed()            │
 └────┬────────────────┘
      │               ┌────────────────────┐
-     │               │ FAISS Vector Index │ ← 搜尋歷史相似模式
+     │               │ OpenSearch k-NN    │ ← 搜尋歷史相似模式
      ├───────────────▶│ search(), add()    │
      │               └────────────────────┘
      ▼
@@ -88,8 +88,8 @@
 └────────┬───────────┘
          ▼
 ┌────────────────────┐
-│ Exporter           │ ← 將分析結果輸出為 JSON
-│ JSON / Log Report  │
+│ Exporter           │ ← 將分析結果寫入 OpenSearch
+│ OpenSearch Index   │
 └────────────────────┘
 ```
 專案目錄
@@ -101,7 +101,6 @@ MCP_lms_log_analyzer/
    │  ├─ config.py
    │  ├─ requirements.txt
    │  ├─ src/
-   │  │  ├─ filebeat_server.py
    │  │  ├─ llm_handler.py
    │  │  ├─ log_parser.py
    │  │  ├─ log_processor.py
@@ -126,7 +125,7 @@ Python 3.8+: 作為主要的開發語言。
 
 LangChain: 用於快速建構 LLM 應用，管理與串聯提示 (Prompt)、模型 (LLM) 與輸出解析 (Output Parser)。
 Sentence Transformers: 用於將日誌文本轉換為高品質的語義向量 (Embeddings)。
-FAISS (Facebook AI Similarity Search): 由 Facebook AI 開發的高效相似度搜尋函式庫，用於本地向量儲存與檢索。
+OpenSearch: 內建 k-NN 功能，儲存與檢索向量化日誌。
 Pytest: 用於驅動專案的單元測試與整合測試。
 整合服務:
 
@@ -186,17 +185,11 @@ V. 使用方式
 ```
 python main.py
 ```
-腳本將從上次中斷的地方繼續處理新的日誌行，並將結果輸出至指定的 JSON 檔案。
+腳本將從上次中斷的地方繼續處理新的日誌行，並將結果寫入 OpenSearch。
 
 2. 即時處理模式 (Filebeat)
-啟動接收伺服器:
-```
-python src/filebeat_server.py
-伺服器預設會在 localhost:8080 監聽。
-```
-
-設定 Filebeat:
-在您的 filebeat.yml 中，設定 output 指向本專案的 HTTP 端點。
+Filebeat 可直接將日誌輸出到 OpenSearch，無需再啟動 `filebeat_server.py`。
+請在 `filebeat.yml` 指定 OpenSearch 作為 output。
 ```
 YAML
 
@@ -206,11 +199,9 @@ filebeat.inputs:
     paths:
       - /var/log/*.log
 
-output.http:
-  url: "http://localhost:8080"
-  method: "POST"
-  headers:
-    Content-Type: "application/json"
+output.opensearch:
+  hosts: ["http://localhost:9200"]
+  index: "lms-raw"
 ```
 VI. 測試
 本專案包含單元測試與整合測試。執行以下指令來運行所有測試：
@@ -220,7 +211,7 @@ VII. 設定詳解
 所有可自訂的參數都集中在 config.py 中，也可透過環境變數覆寫。常見的設定包含：
 ```
 LMS_TARGET_LOG_DIR：要掃描的日誌目錄，預設為 `/var/log`。
-LMS_ANALYSIS_OUTPUT_FILE：分析結果輸出的 JSON 路徑。
+OPENSEARCH_RESULT_INDEX：儲存分析結果的索引名稱。
 CACHE_SIZE、SAMPLE_TOP_PERCENT：控制快取大小與取樣比例。
 BATCH_SIZE：LLM 一次處理的告警筆數，可透過 LMS_LLM_BATCH_SIZE 設定。
 MAX_HOURLY_COST_USD：每小時允許的 LLM 費用上限。
@@ -238,7 +229,7 @@ VIII. 專案進度與未來展望
 狀態管理與日誌輪替: 透過追蹤檔案 inode 與讀取位移，能穩定處理日誌輪替 (Log Rotation) 而不遺漏或重複。
 錯誤處理與韌性: 關鍵的網路I/O（如 LLM 與 Wazuh 告警讀取）已加上具備指數退讓的重試機制。
 外部化設定: 專案設定皆可透過環境變數覆寫，無需修改程式碼。
-近即時處理: 已提供 filebeat_server.py，支援透過 HTTP 進行近即時的日誌分析。
+近即時處理: Filebeat 直接將日誌寫入 OpenSearch，實現近即時分析。
 成本控制與批次處理: 成功實作了結果快取、智慧取樣、成本上限保護，並透過批次處理提升 LLM API 呼叫效率。
 自動化測試: 已建立完整的 pytest 測試集，並透過 GitHub Actions 實現 CI/CD。
 未來擴充與優化建議
